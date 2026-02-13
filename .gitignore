@@ -16,7 +16,7 @@ Thumbs.db
 .vscode/
 
 # Outputs / logs
-locator/out/
+# locator/out/
 *.log
 
 # Model weights (optional)
