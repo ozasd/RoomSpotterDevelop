@@ -76,32 +76,37 @@
 - `patches/roi_XXX.png`：每個 ROI 的裁切 patch
 - `rois.txt`：每個 ROI 的座標、面積、中心點 mm（後續可餵給 YOLO 或做統計）
 
----
-
 ## 4. 檔案結構與描述 (Files)
+
 建議專案最小結構如下：
 
+```text
 RoomSpotter/
 ├─ locator/
-│ ├─ baseline.png # 基準圖（乾淨底紙）
-│ ├─ current.png # 當前圖（有髒污/物件）
-│ └─ out/ # 程式輸出（自動生成）
-│ ├─ debug_detect_.png
-│ ├─ warped_.png
-│ ├─ diff_.png
-│ ├─ mask_.png
-│ ├─ result_rois_on_current.png
-│ ├─ result_mask_overlay.png
-│ ├─ rois.txt
-│ └─ patches/
-│ ├─ roi_001.png
-│ └─ ...
-├─ generate_locator_sheet.py # 產生 A4 定位底紙（四角 ArUco）
-└─ compare_diff_final.py # baseline/current 對齊 + diff + ROI + 輸出結果
+│  ├─ baseline.png                # 基準圖（乾淨底紙）
+│  ├─ current.png                 # 當前圖（有髒污/物件）
+│  └─ out/                        # 程式輸出（自動生成）
+│     ├─ debug_detect_baseline.png
+│     ├─ debug_detect_current.png
+│     ├─ warped_baseline.png
+│     ├─ warped_current.png
+│     ├─ diff_intensity.png
+│     ├─ diff_edge.png
+│     ├─ diff_edge_boost.png
+│     ├─ mask_obj_raw.png
+│     ├─ mask_edge_canny.png
+│     ├─ mask_edge_dilated.png
+│     ├─ mask_merged_raw.png
+│     ├─ diff_mask.png
+│     ├─ result_rois_on_current.png
+│     ├─ result_mask_overlay.png
+│     ├─ rois.txt
+│     └─ patches/
+│        ├─ roi_001.png
+│        └─ ...
+├─ generate_locator_sheet.py      # 產生 A4 定位底紙（四角 ArUco）
+└─ compare_diff_final.py          # baseline/current 對齊 + diff + ROI + 輸出結果
 
-
-
----
 
 ## 5. 技術架構 (Technology Stack)
 
