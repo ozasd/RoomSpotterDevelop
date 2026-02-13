@@ -1,0 +1,6 @@
+ROI1	xywh=(1533,1658,277,762)	area=211074.0	aspect=2.75	center_norm=(0.8357,0.3713)
+ROI2	xywh=(819,1272,748,267)	area=199716.0	aspect=2.80	center_norm=(0.5965,0.5666)
+ROI3	xywh=(306,599,261,374)	area=97614.0	aspect=1.43	center_norm=(0.2182,0.7576)
+ROI4	xywh=(37,1404,335,291)	area=97485.0	aspect=1.11	center_norm=(0.0795,0.5219)
+ROI5	xywh=(579,2024,276,272)	area=75072.0	aspect=1.01	center_norm=(0.3585,0.3340)
+ROI6	xywh=(1255,534,133,378)	area=50274.0	aspect=2.84	center_norm=(0.6607,0.7771)

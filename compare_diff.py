@@ -181,6 +181,86 @@ def px_to_norm(x_px, y_px, W, H):
     ny = 1.0 - (float(y_px) / float(max(1, H)))
     return nx, ny
 
+
+def merge_nearby_rois(rois, overlap_thresh=0.2):
+    """
+    解決衛生紙團被切成好幾個框的問題。
+    如果一個較小的框與較大的框重疊超過 overlap_thresh，則將其合併。
+    """
+    if not rois:
+        return []
+
+    # 1. 將 ROIs 轉換成 [x1, y1, x2, y2, original_index] 方便計算
+    boxes = []
+    for i, r in enumerate(rois):
+        boxes.append({
+            "x1": r['x'], 
+            "y1": r['y'], 
+            "x2": r['x'] + r['w'], 
+            "y2": r['y'] + r['h'], 
+            "area": r['area'],
+            "data": r # 保留原始資料
+        })
+
+    # 2. 依照面積由大到小排序 (優先保留大物體)
+    boxes.sort(key=lambda b: b['area'], reverse=True)
+
+    merged_boxes = []
+
+    while boxes:
+        # 取出當前最大的框 (基準框)
+        base = boxes.pop(0)
+        
+        keep_indices = []
+        
+        # 檢查剩餘的框是否應該被這個基準框「吸收」
+        for i, other in enumerate(boxes):
+            # 計算交集 (Intersection)
+            xx1 = max(base['x1'], other['x1'])
+            yy1 = max(base['y1'], other['y1'])
+            xx2 = min(base['x2'], other['x2'])
+            yy2 = min(base['y2'], other['y2'])
+
+            w = max(0, xx2 - xx1)
+            h = max(0, yy2 - yy1)
+            inter_area = w * h
+            
+            # 計算重疊比例 (相對於較小的那個框)
+            overlap_ratio = inter_area / other['area'] if other['area'] > 0 else 0
+
+            if overlap_ratio > overlap_thresh:
+                # 合併座標：讓 Base 框變大以包含 Other 框
+                base['x1'] = min(base['x1'], other['x1'])
+                base['y1'] = min(base['y1'], other['y1'])
+                base['x2'] = max(base['x2'], other['x2'])
+                base['y2'] = max(base['y2'], other['y2'])
+                # 不將此框加入 keep_indices (等於刪除它)
+            else:
+                keep_indices.append(i)
+        
+        # 更新剩下的 boxes 列表，繼續下一輪
+        boxes = [boxes[k] for k in keep_indices]
+        merged_boxes.append(base)
+
+    # 3. 將合併後的結果轉回原始 rois 格式
+    final_rois = []
+    for b in merged_boxes:
+        # 重算寬高與中心
+        x, y = b['x1'], b['y1']
+        w, h = b['x2'] - b['x1'], b['y2'] - b['y1']
+        area = w * h
+        
+        r_new = b['data'].copy()
+        r_new['x'], r_new['y'] = int(x), int(y)
+        r_new['w'], r_new['h'] = int(w), int(h)
+        r_new['area'] = float(area)
+        r_new['cx_px'] = x + w / 2.0
+        r_new['cy_px'] = y + h / 2.0
+        
+        final_rois.append(r_new)
+
+    return final_rois
+
 def diff_and_rois(base_warp, cur_warp):
     # 取得尺寸
     Hh, Ww = cur_warp.shape[:2]
@@ -189,12 +269,12 @@ def diff_and_rois(base_warp, cur_warp):
     base_g = cv2.cvtColor(base_warp, cv2.COLOR_BGR2GRAY)
     cur_g  = cv2.cvtColor(cur_warp,  cv2.COLOR_BGR2GRAY)
 
-    # CLAHE 增強對比 (保留原本設定)
+    # CLAHE 增強對比
     if USE_CLAHE:
         base_g = clahe_gray(base_g)
         cur_g  = clahe_gray(cur_g)
 
-    # 高斯模糊 (建議開啟，例如 GAUSS_BLUR=3，以減少噪點)
+    # 高斯模糊 (減少噪點)
     if GAUSS_BLUR and GAUSS_BLUR > 0:
         k = GAUSS_BLUR if GAUSS_BLUR % 2 == 1 else GAUSS_BLUR + 1
         base_g = cv2.GaussianBlur(base_g, (k, k), 0)
@@ -212,20 +292,18 @@ def diff_and_rois(base_warp, cur_warp):
 
     # --- A) Intensity Mask (抓大塊顏色變化) ---
     vals = diff_i[diff_i > 0]
-    # [修正] 提高最低門檻至 25 (原本 8 太敏感)，避免背景雜訊
+    # 使用較高的門檻 25，避免背景噪點
     t_obj = int(max(25, np.percentile(vals, 92))) if vals.size > 50 else 25
     mask_obj = (diff_i >= t_obj).astype(np.uint8) * 255
     cv2.imwrite(os.path.join(OUT_DIR, "mask_obj_raw.png"), mask_obj)
 
     # --- B) Edge Mask (抓輪廓變化) ---
-    # [修正核心] 放棄 Canny，改用 Threshold 硬閥值
-    # 邏輯：只有當邊緣差異強度 > 30 時，才視為有效變化
-    # 如果雜訊還是多，可以試著把 30 調高到 40 或 50
+    # 使用 Threshold 硬閥值 (30)，放棄 Canny 以避免擴散
     EDGE_THRESHOLD = 30
     _, mask_edge = cv2.threshold(diff_e, EDGE_THRESHOLD, 255, cv2.THRESH_BINARY)
     cv2.imwrite(os.path.join(OUT_DIR, "mask_edge_threshold.png"), mask_edge)
 
-    # 稍微膨脹一點點，讓斷掉的線條連起來，但不要太大
+    # 稍微膨脹讓斷線連接
     k_merge = 3
     kernel_merge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_merge, k_merge))
     mask_edge = cv2.dilate(mask_edge, kernel_merge, iterations=1)
@@ -235,17 +313,15 @@ def diff_and_rois(base_warp, cur_warp):
     mask = cv2.bitwise_or(mask_obj, mask_edge)
     cv2.imwrite(os.path.join(OUT_DIR, "mask_merged_raw.png"), mask)
 
-    # --- C) Morphology 清理 (防止擴散的關鍵步驟) ---
+    # --- C) Morphology 清理 (防止擴散的關鍵) ---
     
-    # [關鍵步驟 1] Open (開運算)：先侵蝕再膨脹，用來「吃掉」孤立的白點 (噪點)
-    # 這步能切斷雜訊之間的連結，防止它們在下一步被連成大方塊
-    k_open = 3  # 3x3 或 5x5
+    # 1. Open (開運算)：吃掉孤立噪點
+    k_open = 3 
     kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_open, k_open))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
 
-    # [關鍵步驟 2] Close (閉運算)：先膨脹再侵蝕，用來「填滿」物體內部的空洞
-    # 這裡可以用大一點的核，把真正的物體連起來
-    k_close = 9 # 9x9 確保物體完整
+    # 2. Close (閉運算)：填滿物體空洞
+    k_close = 9 
     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_close, k_close))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close, iterations=2)
     
@@ -265,7 +341,7 @@ def diff_and_rois(base_warp, cur_warp):
         aspect = long_side / short_side
         extent = area / float(max(1, w * h))
 
-        # 篩選條件 (保持原本邏輯)
+        # 篩選條件
         keep_big = area >= MIN_AREA_PX
         keep_hair = (perim >= MIN_PERIM_PX and long_side >= MIN_LEN_PX and 
                      aspect >= MIN_ASPECT and extent <= MAX_EXTENT)
@@ -287,146 +363,12 @@ def diff_and_rois(base_warp, cur_warp):
             "cx_n": float(cx_n), "cy_n": float(cy_n),
         })
 
-    rois.sort(key=lambda r: r["area"], reverse=True)
-    return rois, mask    # ... (前面的 code: 轉灰階, CLAHE, GaussianBlur, diff_i, diff_e 都保持不變) ...
-
-    # --- A) intensity mask（抓大變化）---
-    vals = diff_i[diff_i > 0]
-    # [修改] 提高最低門檻到 25，防止光線微變導致整張圖被選取
-    t_obj = int(max(25, np.percentile(vals, 92))) if vals.size > 50 else 25
-    mask_obj = (diff_i >= t_obj).astype(np.uint8) * 255
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_obj_raw.png"), mask_obj)
-
-    # --- B) edge mask（抓細線：頭髮）---
-    # [修改核心] 放棄 Canny，改用 Threshold 硬閥值
-    # 邏輯：只有當「邊緣差異」大於 30 (0~255) 時，才算作是物體
-    # 這樣可以過濾掉背景那些微小的雜訊 (通常 < 10)
-    
-    EDGE_THRESHOLD = 30  # 如果還是太多雜訊，可以調高這個值 (例如 40 或 50)
-    _, mask_edge = cv2.threshold(diff_e, EDGE_THRESHOLD, 255, cv2.THRESH_BINARY)
-    
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_edge_threshold.png"), mask_edge)
-
-    # [修改] 稍微膨脹一點點，讓斷掉的線連起來，但不要像之前那麼大
-    # 使用 3x3 的核即可
-    kernel_merge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask_edge = cv2.dilate(mask_edge, kernel_merge, iterations=1)
-    
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_edge_dilated.png"), mask_edge)
-
-    # --- Merged mask ---
-    mask = cv2.bitwise_or(mask_obj, mask_edge)
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_merged_raw.png"), mask)
-
-    # === Step 1: 先 Open 去除剩下的孤立噪點 ===
-    # 這裡非常重要，用 3x3 或 5x5 的核把小白點吃掉
-    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)) 
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
-
-    # === Step 2: 再 Close 把物體內部補滿 ===
-    # 這裡可以用大一點的核，把物體連起來
-    k2 = 9  # 稍微加大一點，確保物體完整
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k2, k2))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close, iterations=2)
-    
-    cv2.imwrite(os.path.join(OUT_DIR, "diff_mask.png"), mask)
-
-    # ... (後面的 contours -> rois 保持不變) ...    Hh, Ww = cur_warp.shape[:2]
-
-    base_g = cv2.cvtColor(base_warp, cv2.COLOR_BGR2GRAY)
-    cur_g  = cv2.cvtColor(cur_warp,  cv2.COLOR_BGR2GRAY)
-
-    if USE_CLAHE:
-        base_g = clahe_gray(base_g)
-        cur_g  = clahe_gray(cur_g)
-
-    if GAUSS_BLUR and GAUSS_BLUR > 0:
-        k = GAUSS_BLUR if GAUSS_BLUR % 2 == 1 else GAUSS_BLUR + 1
-        base_g = cv2.GaussianBlur(base_g, (k, k), 0)
-        cur_g  = cv2.GaussianBlur(cur_g,  (k, k), 0)
-
-    # intensity diff
-    diff_i = cv2.absdiff(base_g, cur_g)
-    cv2.imwrite(os.path.join(OUT_DIR, "diff_intensity.png"), diff_i)
-
-    # edge diff
-    base_e = sobel_mag(base_g)
-    cur_e  = sobel_mag(cur_g)
-    diff_e = cv2.absdiff(base_e, cur_e)
-    cv2.imwrite(os.path.join(OUT_DIR, "diff_edge.png"), diff_e)
-
-    # --- A) intensity mask（抓大變化）---
-    vals = diff_i[diff_i > 0]
-    t_obj = int(max(20, np.percentile(vals, 92))) if vals.size > 50 else 8
-    mask_obj = (diff_i >= t_obj).astype(np.uint8) * 255
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_obj_raw.png"), mask_obj)
-
-    # --- B) edge mask（抓細線：頭髮）---
-    diff_e_boost = cv2.convertScaleAbs(diff_e, alpha=2.5, beta=0)  # 2.0~4.0 可調
-    cv2.imwrite(os.path.join(OUT_DIR, "diff_edge_boost.png"), diff_e_boost)
-
-    edge = auto_canny(diff_e_boost, sigma=0.33)
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_edge_canny.png"), edge)
-
-    k1 = MERGE_DILATE_K if MERGE_DILATE_K % 2 == 1 else MERGE_DILATE_K + 1
-    kernel_merge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k1, k1))
-    mask_edge = cv2.dilate(edge, kernel_merge, iterations=1)
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_edge_dilated.png"), mask_edge)
-
-    # merged mask
-    mask = cv2.bitwise_or(mask_obj, mask_edge)
-    cv2.imwrite(os.path.join(OUT_DIR, "mask_merged_raw.png"), mask)
-
-    # === [新增] Step 1: 先用 Open 把細碎雜訊吃掉 ===
-    # 定義一個稍微小一點的核給 Open 用
-    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
-    
-    # === [原本] Step 2: 再用 Close 把物體內部補洞 ===
-    # small close（連起來）不要 open -> 這裡原本的註解
-    k2 = MORPH_K if MORPH_K % 2 == 1 else MORPH_K + 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k2, k2))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    
-    cv2.imwrite(os.path.join(OUT_DIR, "diff_mask.png"), mask)
-
-    # contours -> rois
-    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    rois = []
-    for c in cnts:
-        area = cv2.contourArea(c)
-        perim = cv2.arcLength(c, True)
-        x, y, w, h = cv2.boundingRect(c)
-
-        long_side = max(w, h)
-        short_side = max(1, min(w, h))
-        aspect = long_side / short_side
-        extent = area / float(max(1, w * h))
-
-        keep_big = area >= MIN_AREA_PX
-        keep_hair = (perim >= MIN_PERIM_PX and long_side >= MIN_LEN_PX and aspect >= MIN_ASPECT and extent <= MAX_EXTENT)
-
-        if not (keep_big or keep_hair):
-            continue
-
-        cx = x + w / 2.0
-        cy = y + h / 2.0
-        cx_n, cy_n = px_to_norm(cx, cy, Ww, Hh)
-
-        rois.append({
-            "x": int(x), "y": int(y), "w": int(w), "h": int(h),
-            "area": float(area),
-            "perim": float(perim),
-            "aspect": float(aspect),
-            "extent": float(extent),
-            "cx_px": float(cx), "cy_px": float(cy),
-            "cx_n": float(cx_n), "cy_n": float(cy_n),   # normalized(0~1)
-        })
+    # === [關鍵] 在排序輸出前，先執行方框合併 ===
+    # 這一步會把破碎的衛生紙團框框整合成一個
+    rois = merge_nearby_rois(rois, overlap_thresh=0.1)
 
     rois.sort(key=lambda r: r["area"], reverse=True)
     return rois, mask
-
 # =========================
 # Visualization outputs
 # =========================

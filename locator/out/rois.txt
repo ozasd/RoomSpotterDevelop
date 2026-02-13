@@ -1,4 +1,4 @@
-ROI1	xywh=(392,946,148,112)	area=11336.0	aspect=1.32	center_norm=(0.2330,0.1615)
-ROI2	xywh=(1270,550,157,97)	area=10043.5	aspect=1.62	center_norm=(0.6743,0.4992)
-ROI3	xywh=(1019,783,59,172)	area=8283.0	aspect=2.92	center_norm=(0.5242,0.2728)
-ROI4	xywh=(310,753,113,104)	area=6850.0	aspect=1.09	center_norm=(0.1832,0.3264)
+ROI1	xywh=(392,946,148,112)	area=16576.0	aspect=1.32	center_norm=(0.2330,0.1615)
+ROI2	xywh=(1270,550,157,97)	area=15229.0	aspect=1.62	center_norm=(0.6743,0.4992)
+ROI3	xywh=(310,753,113,104)	area=11752.0	aspect=1.09	center_norm=(0.1832,0.3264)
+ROI4	xywh=(1019,783,59,172)	area=10148.0	aspect=2.92	center_norm=(0.5242,0.2728)

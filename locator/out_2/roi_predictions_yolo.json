@@ -1,0 +1,64 @@
+[
+  {
+    "patch": "roi_001.png",
+    "label": "cup",
+    "conf": 0.46772685647010803,
+    "has_box": true,
+    "box_xyxy": [
+      1,
+      1,
+      277,
+      757
+    ]
+  },
+  {
+    "patch": "roi_002.png",
+    "label": "banana",
+    "conf": 0.6788606643676758,
+    "has_box": true,
+    "box_xyxy": [
+      4,
+      3,
+      735,
+      258
+    ]
+  },
+  {
+    "patch": "roi_003.png",
+    "label": "unknown",
+    "conf": 0.0,
+    "has_box": false,
+    "box_xyxy": null
+  },
+  {
+    "patch": "roi_004.png",
+    "label": "person",
+    "conf": 0.6671963930130005,
+    "has_box": true,
+    "box_xyxy": [
+      1,
+      2,
+      332,
+      280
+    ]
+  },
+  {
+    "patch": "roi_005.png",
+    "label": "unknown",
+    "conf": 0.0,
+    "has_box": false,
+    "box_xyxy": null
+  },
+  {
+    "patch": "roi_006.png",
+    "label": "bottle",
+    "conf": 0.932145357131958,
+    "has_box": true,
+    "box_xyxy": [
+      0,
+      2,
+      129,
+      377
+    ]
+  }
+]

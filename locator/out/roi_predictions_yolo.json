@@ -25,6 +25,13 @@
   },
   {
     "patch": "roi_003.png",
+    "label": "unknown",
+    "conf": 0.0,
+    "has_box": false,
+    "box_xyxy": null
+  },
+  {
+    "patch": "roi_004.png",
     "label": "bottle",
     "conf": 0.860230565071106,
     "has_box": true,
@@ -34,12 +41,5 @@
       57,
       170
     ]
-  },
-  {
-    "patch": "roi_004.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
   }
 ]
