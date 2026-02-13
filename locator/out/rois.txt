@@ -1,0 +1,4 @@
+ROI1	xywh=(1187,1041,607,225)	area=59633.5	aspect=2.70	center_mm=(156.5,175.9)
+ROI2	xywh=(1338,1615,180,341)	area=58405.0	aspect=1.89	center_mm=(149.9,109.6)
+ROI3	xywh=(437,1422,323,243)	area=50841.0	aspect=1.33	center_mm=(62.8,135.0)
+ROI4	xywh=(460,665,208,279)	area=2950.5	aspect=1.34	center_mm=(59.2,212.5)
