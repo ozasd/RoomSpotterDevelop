@@ -1,61 +1,116 @@
 # RoomSpotter: 基於混合架構與相對座標的房間髒污辨識系統
 
 ## 1. 專案簡介
-本專案旨在解決環境中細微髒污（如頭髮、灰塵）難以辨識的問題。透過在特定區域設置 **ArUco 定位標記**，系統能自動對齊前後兩幀影像，精確鎖定變動區域，並利用 **YOLO 深度學習模型** 進行精準分類。
+本專案旨在解決環境中細微髒污（如頭髮、灰塵）難以辨識的問題。系統在場景中設置 **ArUco 定位標記**，使得拍攝角度、距離或影像尺寸不同時，仍能將影像對齊到同一個標準平面（俯視圖）。  
+在完成對齊後，以「基準影像 baseline」與「當前影像 current」做差異檢測，鎖定 ROI（變動區域），後續可將 ROI patches 丟入 **YOLO** 進行髒污/誤報分類。
 
 ---
 
 ## 2. 測試環境部署 (PoC Demo)
-為了驗證系統邏輯，我們使用「定位底紙」方案：
-1. **定位點設計**：在 A4 或大張白紙的四個角落列印不同的 ArUco 標籤 (ID 0~3)。
-2. **座標定義**：以標籤 ID 0 為座標原點 $(0,0)$。
-3. **功能**：即使拍攝角度傾斜，系統也能透過這四個點將影像還原（Warp Perspective）為正視圖。
+為了驗證系統邏輯，我們先用「A4 定位底紙」快速模擬房間場景：
 
+1. **定位點設計**：生成一張 A4 白底定位圖，四角放置 ArUco 標籤（ID 0~3）。
+2. **拍攝規則**：  
+   - `baseline.png`：空白乾淨底紙（無物件）  
+   - `current.png`：在底紙上放置頭髮、衛生紙團、飲料罐等物件後拍攝  
+3. **功能**：即使 current 角度歪斜、距離不同、解析度不同，仍可透過四角 ArUco 完成透視校正，將 baseline/current 映射到同一張「標準俯視圖」後再比對。
 
+> 註：正式房間場景可把定位貼紙貼在牆面四角；PoC 階段用 A4 白紙是為了快速驗證整條流程與相對座標定位。
 
 ---
 
 ## 3. 系統核心流程 (Workflow)
 
 ### Step 1: 影像對齊與校正 (Alignment)
-- **標籤偵測**：自動識別畫面中的 4 個 ArUco 標籤像素座標。
-- **透視變換**：利用 `cv2.getPerspectiveTransform` 矩陣計算，將傾斜的照片轉化為「標準俯視圖」。
-- **歸一化**：確保基準圖 (Baseline) 與當前圖 (Current) 在同一個像素尺度與視角下。
+- **標籤偵測**：偵測 4 個 ArUco marker，取得各 marker 的像素角點位置。
+- **透視變換**：以 marker 中心點為對應點，計算 Homography（`cv2.getPerspectiveTransform`），將傾斜照片轉成「標準俯視圖」。
+- **歸一化**：將 baseline 與 current 皆轉成固定解析度（`WARP_W × WARP_H`），確保像素尺度一致後再做差異分析。
 
-### Step 2: 差異檢測與 ROI 提取 (Diff Engine)
-- **影像差分**：執行 `cv2.absdiff` 運算，獲取兩張圖之間的物理變化。
-- **動態門檻過濾**：使用 Otsu 二值化或高斯模糊處理，過濾光影微小變動產生的噪點。
-- **ROI 裁切**：透過連通域分析 (Contours) 抓取變動區域，並裁切成小圖塊 (Patches)。
-
-### Step 3: YOLO 分類器判定 (AI Classification)
-- **微小物件偵測**：將裁切後的 ROI 圖塊送入 YOLO 模型。
-- **類別篩選**：
-  - **確認髒污**：頭髮 (Hair)、碎屑 (Debris)、水漬 (Stain)。
-  - **排除誤報**：陰影變動 (Shadow)、光點 (Light Flash)。
-
-### Step 4: 結果輸出與定位
-- **物理座標轉換**：將影像中的像素點座標轉換為相對於標籤的物理距離 (cm)。
-- **結果標記**：在最終輸出圖上框選髒污並標註類別。
+輸出關鍵圖：
+- `debug_detect_baseline.png` / `debug_detect_current.png`：檢查四角 marker 是否都被辨識到、ID 是否正確
+- `warped_baseline.png` / `warped_current.png`：校正後的標準俯視圖（後續所有 diff 都以此為基準）
 
 ---
 
-## 4. 技術架構 (Technology Stack)
+### Step 2: 差異檢測與 ROI 提取 (Diff Engine)
+本版本採用「**intensity diff + edge diff**」混合策略，改善單根頭髮、白對白物件（如衛生紙團）難以檢出的問題。
+
+- **Intensity Diff（大變化）**：`diff_intensity = absdiff(gray_baseline, gray_current)`  
+  用來抓：飲料罐、物件整塊出現、明顯陰影邊界等。
+- **Edge Diff（細線/輪廓）**：Sobel 梯度差 + 對比增強後用 Canny 擷取弱邊緣  
+  用來抓：單根頭髮、細碎屑、低對比輪廓。
+- **Mask 合併**：`mask = mask_obj OR mask_edge`  
+  並只做 **小型 close** 連通，不做 open（避免把細線吃掉）。
+- **ROI 擷取**：對 `diff_mask` 做連通域/輪廓分析，輸出 ROI bounding boxes；同時支援「大面積物件」與「細長物件（頭髮）」保留規則。
+
+輸出關鍵圖（用來 debug 效果非常重要）：
+- `diff_intensity.png`：亮度差分圖（大物件訊號）
+- `diff_edge.png`：梯度差分圖（細線輪廓訊號）
+- `diff_edge_boost.png`：梯度差分對比增強後結果
+- `mask_edge_canny.png`：由 diff_edge_boost 產生的 Canny 邊緣遮罩
+- `mask_edge_dilated.png`：邊緣遮罩膨脹後（讓細線更連通）
+- `mask_obj_raw.png`：intensity 產生的物件遮罩
+- `mask_merged_raw.png`：合併後的原始遮罩
+- `diff_mask.png`：最終遮罩（拿來找 ROI）
+
+---
+
+### Step 3: YOLO 分類器判定 (AI Classification)（下一步）
+- **ROI patches**：將每個 ROI 裁切成小圖塊（patch），輸出到 `out/patches/`
+- **模型判定**：將 patches 丟入 YOLO（或 SAHI + YOLO）做分類  
+  - **確認髒污**：Hair / Debris / Stain  
+  - **排除誤報**：Shadow / Light Flash / Background changes
+
+> 本次進度先完成「定位 → 對齊 → diff → ROI/patches」；YOLO 分類整合會接續加入。
+
+---
+
+### Step 4: 結果輸出與定位 (Output & Localization)
+- **結果框選**：在 `warped_current` 上畫出 ROI 框並標註資訊
+- **mask 疊圖**：將 `diff_mask` 以半透明方式疊在 current，快速肉眼驗證抓取區域
+- **相對座標（mm）**：把 ROI 中心點從 warp 像素座標換算回 A4 的 mm 座標（可延伸到 cm、或對應房間平面）
+
+輸出檔：
+- `result_rois_on_current.png`：ROI 框選結果圖（含中心點 mm）
+- `result_mask_overlay.png`：diff_mask 疊圖（最直覺看抓到哪）
+- `patches/roi_XXX.png`：每個 ROI 的裁切 patch
+- `rois.txt`：每個 ROI 的座標、面積、中心點 mm（後續可餵給 YOLO 或做統計）
+
+---
+
+## 4. 檔案結構與描述 (Files)
+建議專案最小結構如下：
+
+RoomSpotter/
+├─ locator/
+│ ├─ baseline.png # 基準圖（乾淨底紙）
+│ ├─ current.png # 當前圖（有髒污/物件）
+│ └─ out/ # 程式輸出（自動生成）
+│ ├─ debug_detect_.png
+│ ├─ warped_.png
+│ ├─ diff_.png
+│ ├─ mask_.png
+│ ├─ result_rois_on_current.png
+│ ├─ result_mask_overlay.png
+│ ├─ rois.txt
+│ └─ patches/
+│ ├─ roi_001.png
+│ └─ ...
+├─ generate_locator_sheet.py # 產生 A4 定位底紙（四角 ArUco）
+└─ compare_diff_final.py # baseline/current 對齊 + diff + ROI + 輸出結果
+
+
+
+---
+
+## 5. 技術架構 (Technology Stack)
 
 | 類別 | 使用技術 |
 | :--- | :--- |
-| **程式語言** | Python 3.10+ |
-| **影像處理** | OpenCV (ArUco Module) |
-| **深度學習** | YOLOv8 / YOLOv10 (Object Detection) |
-| **輔助工具** | SAHI (切片推論), NumPy (矩陣運算) |
+| 程式語言 | Python 3.10+ |
+| 影像處理 | OpenCV (ArUco, warpPerspective, absdiff, Sobel, Canny) |
+| 深度學習 | YOLOv8 / YOLOv10（下一步整合） |
+| 輔助工具 | NumPy、（可選）SAHI（切片推論） |
 
 ---
-
-## 5. 快速啟動 (Quick Start)
-
-### 1. 產生定位底紙
-執行內附的 `generate_markers.py` 產生標籤並列印貼於白紙四角。
-
-### 2. 拍攝照片
-- 拍攝一張「乾淨的底紙」作為 `baseline.jpg`。
-- 在紙上放置頭髮或髒污，拍攝 `current.jpg`。
 
