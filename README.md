@@ -142,8 +142,6 @@ RoomSpotter/
 
 ### 6.1 安裝環境
 
-### 6.1 安裝環境
-
 > 建議用 requirements.txt（版本一致、最穩）
 
 ```bash
