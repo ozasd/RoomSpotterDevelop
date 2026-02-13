@@ -5,6 +5,7 @@ import os
 import cv2
 import numpy as np
 import recognition
+
 # =========================
 # I/O
 # =========================
@@ -18,20 +19,20 @@ os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(PATCH_DIR, exist_ok=True)
 
 # =========================
-# ArUco / Warp 設定
+# ArUco / Warp 設定（不再依賴 A4）
 # =========================
 DICT_NAME = "DICT_4X4_50"
-CORNER_IDS = [0, 1, 2, 3]  # [ID0, ID1, ID2, ID3] = [BL, BR, TR, TL]
+CORNER_IDS = [0, 1, 2, 3]  # [BL, BR, TR, TL]
 
-# A4 + 你生成底紙的物理規格（mm）
-MARKER_SIZE_MM = 40.0
-MARGIN_MM = 15.0
-A4_W_MM = 210.0
-A4_H_MM = 297.0
-
-# 透視校正後輸出解析度：抓單根頭髮建議拉高
+# canonical 輸出寬度（px）
 WARP_W = 2000
-WARP_H = int(round(WARP_W * (A4_H_MM / A4_W_MM)))
+
+# canonical 邊界（px）：代表你希望 marker center 不要貼到邊
+MARGIN_PX = 140
+
+# 如果你想固定輸出高度（不 auto aspect），把 AUTO_ASPECT=False，並指定 WARP_H_FIXED
+AUTO_ASPECT = True
+WARP_H_FIXED = 2800
 
 # =========================
 # Diff / Mask / ROI 參數
@@ -83,25 +84,37 @@ def order_src_points(found_markers):
         pts.append(marker_center(found_markers[mid]))
     return np.array(pts, dtype=np.float32)
 
-def build_dst_points():
-    # marker center 的理論位置（mm）
-    xL = MARGIN_MM + MARKER_SIZE_MM / 2.0
-    xR = A4_W_MM - MARGIN_MM - MARKER_SIZE_MM / 2.0
-    yB = MARGIN_MM + MARKER_SIZE_MM / 2.0
-    yT = A4_H_MM - MARGIN_MM - MARKER_SIZE_MM / 2.0
+def estimate_aspect_from_src(src_4x2):
+    """
+    src order: [BL, BR, TR, TL]
+    用兩條寬、兩條高平均估算長寬比
+    """
+    BL, BR, TR, TL = src_4x2
+    w1 = np.linalg.norm(BR - BL)
+    w2 = np.linalg.norm(TR - TL)
+    h1 = np.linalg.norm(TL - BL)
+    h2 = np.linalg.norm(TR - BR)
+    w = (w1 + w2) / 2.0
+    h = (h1 + h2) / 2.0
+    if w <= 1:
+        return 1.0
+    return float(h / w)
 
-    # mm -> warp(px)
-    def mm_to_px(x_mm, y_mm):
-        x = (x_mm / A4_W_MM) * WARP_W
-        y = (1.0 - (y_mm / A4_H_MM)) * WARP_H  # 影像 y 向下，做反轉
-        return [x, y]
+def build_dst_points(warp_w, warp_h):
+    """
+    canonical 平面上：四個 marker center 的目標位置（px）
+    dst order 對應 src：[BL, BR, TR, TL]
+    """
+    xL = MARGIN_PX
+    xR = warp_w - MARGIN_PX
+    yB = warp_h - MARGIN_PX
+    yT = MARGIN_PX
 
-    # 順序對應 src：[BL, BR, TR, TL]
     dst = np.array([
-        mm_to_px(xL, yB),  # ID0 BL
-        mm_to_px(xR, yB),  # ID1 BR
-        mm_to_px(xR, yT),  # ID2 TR
-        mm_to_px(xL, yT),  # ID3 TL
+        [xL, yB],  # BL
+        [xR, yB],  # BR
+        [xR, yT],  # TR
+        [xL, yT],  # TL
     ], dtype=np.float32)
     return dst
 
@@ -114,8 +127,8 @@ def warp_to_canonical(img_bgr, tag="img"):
         c_int = c.astype(int)
         cv2.polylines(dbg, [c_int], True, (0, 255, 0), 2)
         ctr = marker_center(c).astype(int)
-        cv2.putText(dbg, f"ID{mid}", (ctr[0]+5, ctr[1]-5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+        cv2.putText(dbg, f"ID{mid}", (ctr[0] + 5, ctr[1] - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
     cv2.imwrite(os.path.join(OUT_DIR, f"debug_detect_{tag}.png"), dbg)
 
     src = order_src_points(found)
@@ -123,9 +136,21 @@ def warp_to_canonical(img_bgr, tag="img"):
         missing = [mid for mid in CORNER_IDS if mid not in found]
         raise RuntimeError(f"[{tag}] 缺少 ArUco ID：{missing}，請確保四角都拍到且清晰。")
 
-    dst = build_dst_points()
+    # 自動估 aspect ratio（不再需要 A4 mm）
+    if AUTO_ASPECT:
+        aspect = estimate_aspect_from_src(src)   # h/w
+        warp_w = int(WARP_W)
+        warp_h = int(round(WARP_W * aspect))
+        warp_h = max(800, warp_h)
+    else:
+        warp_w = int(WARP_W)
+        warp_h = int(WARP_H_FIXED)
+
+    dst = build_dst_points(warp_w, warp_h)
+
     H = cv2.getPerspectiveTransform(src, dst)
-    warped = cv2.warpPerspective(img_bgr, H, (WARP_W, WARP_H), flags=cv2.INTER_LINEAR)
+    warped = cv2.warpPerspective(img_bgr, H, (warp_w, warp_h), flags=cv2.INTER_LINEAR)
+
     cv2.imwrite(os.path.join(OUT_DIR, f"warped_{tag}.png"), warped)
     return warped
 
@@ -150,13 +175,15 @@ def auto_canny(img_u8, sigma=0.33):
     upper = int(min(255, (1.0 + sigma) * v))
     return cv2.Canny(img_u8, lower, upper)
 
-def px_to_mm(x_px, y_px):
-    """warp 平面上的像素 -> A4 mm 座標（原點在左下）"""
-    x_mm = (x_px / WARP_W) * A4_W_MM
-    y_mm = (1.0 - (y_px / WARP_H)) * A4_H_MM
-    return x_mm, y_mm
+def px_to_norm(x_px, y_px, W, H):
+    """canonical 平面像素 -> normalized 座標 (0~1)，原點左下"""
+    nx = float(x_px) / float(max(1, W))
+    ny = 1.0 - (float(y_px) / float(max(1, H)))
+    return nx, ny
 
 def diff_and_rois(base_warp, cur_warp):
+    Hh, Ww = cur_warp.shape[:2]
+
     base_g = cv2.cvtColor(base_warp, cv2.COLOR_BGR2GRAY)
     cur_g  = cv2.cvtColor(cur_warp,  cv2.COLOR_BGR2GRAY)
 
@@ -227,10 +254,9 @@ def diff_and_rois(base_warp, cur_warp):
         if not (keep_big or keep_hair):
             continue
 
-        # 中心點 + mm 座標
         cx = x + w / 2.0
         cy = y + h / 2.0
-        cx_mm, cy_mm = px_to_mm(cx, cy)
+        cx_n, cy_n = px_to_norm(cx, cy, Ww, Hh)
 
         rois.append({
             "x": int(x), "y": int(y), "w": int(w), "h": int(h),
@@ -239,7 +265,7 @@ def diff_and_rois(base_warp, cur_warp):
             "aspect": float(aspect),
             "extent": float(extent),
             "cx_px": float(cx), "cy_px": float(cy),
-            "cx_mm": float(cx_mm), "cy_mm": float(cy_mm),
+            "cx_n": float(cx_n), "cy_n": float(cy_n),   # normalized(0~1)
         })
 
     rois.sort(key=lambda r: r["area"], reverse=True)
@@ -252,7 +278,7 @@ def draw_rois(img_bgr, rois):
     out = img_bgr.copy()
     for i, r in enumerate(rois, 1):
         x, y, w, h = r["x"], r["y"], r["w"], r["h"]
-        cv2.rectangle(out, (x, y), (x+w, y+h), (0, 0, 255), 2)
+        cv2.rectangle(out, (x, y), (x + w, y + h), (0, 0, 255), 2)
 
         yolo = r.get("yolo", None)
         if yolo:
@@ -263,24 +289,24 @@ def draw_rois(img_bgr, rois):
         label = (
             f"ROI{i} {y_txt} "
             f"A={int(r['area'])} AR={r['aspect']:.1f} "
-            f"({r['cx_mm']:.1f},{r['cy_mm']:.1f}mm)"
+            f"(n={r['cx_n']:.3f},{r['cy_n']:.3f})"
         )
-        cv2.putText(out, label, (x, max(0, y-8)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,255), 2)
+        cv2.putText(out, label, (x, max(0, y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
     return out
 
 def overlay_mask(img_bgr, mask_u8):
     overlay = img_bgr.copy()
     red = np.zeros_like(img_bgr)
-    red[:, :, 2] = 255  # 紅色
+    red[:, :, 2] = 255
     m = (mask_u8 > 0)[:, :, None]
-    overlay = np.where(m, (overlay*(1-OVERLAY_ALPHA) + red*OVERLAY_ALPHA).astype(np.uint8), overlay)
+    overlay = np.where(m, (overlay * (1 - OVERLAY_ALPHA) + red * OVERLAY_ALPHA).astype(np.uint8), overlay)
     return overlay
 
 def save_patches(img_bgr, rois):
     for i, r in enumerate(rois, 1):
         x, y, w, h = r["x"], r["y"], r["w"], r["h"]
-        patch = img_bgr[y:y+h, x:x+w].copy()
+        patch = img_bgr[y:y + h, x:x + w].copy()
         cv2.imwrite(os.path.join(PATCH_DIR, f"roi_{i:03d}.png"), patch)
 
 def main():
@@ -304,15 +330,15 @@ def main():
     result_boxes = draw_rois(cur_warp, rois)
     cv2.imwrite(os.path.join(OUT_DIR, "result_rois_on_current.png"), result_boxes)
 
-    # 2) mask 疊圖（超直覺）
+    # 2) mask 疊圖
     result_overlay = overlay_mask(cur_warp, mask)
     cv2.imwrite(os.path.join(OUT_DIR, "result_mask_overlay.png"), result_overlay)
 
-    # 3) 裁切 patches（給 YOLO/SAHI 用）
+    # 3) 裁切 patches
     save_patches(cur_warp, rois)
 
-      # 4) YOLO 粗辨識（COCO 預訓練，不用自己訓練）
-    yolo_weights = "yolov8n.pt"  # 你專案根目錄已有這個檔
+    # 4) YOLO 粗辨識（COCO 預訓練）
+    yolo_weights = "yolov8n.pt"
     recog = recognition.YoloPatchRecognizer(weights=yolo_weights, imgsz=320, conf=0.25, iou=0.45)
 
     rois, preds = recog.attach_to_rois(rois, PATCH_DIR)
@@ -323,21 +349,25 @@ def main():
     result_boxes_yolo = draw_rois(cur_warp, rois)
     cv2.imwrite(os.path.join(OUT_DIR, "result_rois_with_yolo.png"), result_boxes_yolo)
 
-    # 4) ROI 文字輸出（方便後處理）
+    # 6) ROI 文字輸出（改成 normalized 座標）
     txt_path = os.path.join(OUT_DIR, "rois.txt")
     with open(txt_path, "w", encoding="utf-8") as f:
         for i, r in enumerate(rois, 1):
             f.write(
                 f"ROI{i}\txywh=({r['x']},{r['y']},{r['w']},{r['h']})\t"
                 f"area={r['area']:.1f}\taspect={r['aspect']:.2f}\t"
-                f"center_mm=({r['cx_mm']:.1f},{r['cy_mm']:.1f})\n"
+                f"center_norm=({r['cx_n']:.4f},{r['cy_n']:.4f})\n"
             )
 
     print("Done. outputs in:", OUT_DIR)
+    print(" - debug_detect_baseline.png / debug_detect_current.png")
+    print(" - warped_baseline.png / warped_current.png")
     print(" - result_rois_on_current.png")
     print(" - result_mask_overlay.png")
     print(" - patches/roi_XXX.png")
     print(" - rois.txt")
+    print(" - roi_predictions_yolo.json")
+    print(" - result_rois_with_yolo.png")
 
 if __name__ == "__main__":
     main()
