@@ -107,6 +107,8 @@ RoomSpotter/
 ├─ generate_locator_sheet.py      # 產生 A4 定位底紙（四角 ArUco）
 └─ compare_diff_final.py          # baseline/current 對齊 + diff + ROI + 輸出結果
 
+```
+
 ---
 
 ## 5. 技術架構 (Technology Stack)
