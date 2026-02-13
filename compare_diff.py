@@ -4,7 +4,7 @@
 import os
 import cv2
 import numpy as np
-
+import recognition
 # =========================
 # I/O
 # =========================
@@ -253,7 +253,18 @@ def draw_rois(img_bgr, rois):
     for i, r in enumerate(rois, 1):
         x, y, w, h = r["x"], r["y"], r["w"], r["h"]
         cv2.rectangle(out, (x, y), (x+w, y+h), (0, 0, 255), 2)
-        label = f"ROI{i} A={int(r['area'])} AR={r['aspect']:.1f} ({r['cx_mm']:.1f},{r['cy_mm']:.1f}mm)"
+
+        yolo = r.get("yolo", None)
+        if yolo:
+            y_txt = f"{yolo['label']} {yolo['conf']:.2f}"
+        else:
+            y_txt = "no-yolo"
+
+        label = (
+            f"ROI{i} {y_txt} "
+            f"A={int(r['area'])} AR={r['aspect']:.1f} "
+            f"({r['cx_mm']:.1f},{r['cy_mm']:.1f}mm)"
+        )
         cv2.putText(out, label, (x, max(0, y-8)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,255), 2)
     return out
@@ -299,6 +310,18 @@ def main():
 
     # 3) 裁切 patches（給 YOLO/SAHI 用）
     save_patches(cur_warp, rois)
+
+      # 4) YOLO 粗辨識（COCO 預訓練，不用自己訓練）
+    yolo_weights = "yolov8n.pt"  # 你專案根目錄已有這個檔
+    recog = recognition.YoloPatchRecognizer(weights=yolo_weights, imgsz=320, conf=0.25, iou=0.45)
+
+    rois, preds = recog.attach_to_rois(rois, PATCH_DIR)
+    recog.save_json(preds, os.path.join(OUT_DIR, "roi_predictions_yolo.json"))
+    recog.visualize_many(PATCH_DIR, preds, os.path.join(OUT_DIR, "yolo_test"))
+
+    # 5) 重新輸出一張「含 YOLO label」的框選圖
+    result_boxes_yolo = draw_rois(cur_warp, rois)
+    cv2.imwrite(os.path.join(OUT_DIR, "result_rois_with_yolo.png"), result_boxes_yolo)
 
     # 4) ROI 文字輸出（方便後處理）
     txt_path = os.path.join(OUT_DIR, "rois.txt")

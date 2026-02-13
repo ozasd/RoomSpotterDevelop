@@ -55,26 +55,33 @@
 
 ---
 
-### Step 3: YOLO 分類器判定 (AI Classification)（下一步）
-- **ROI patches**：將每個 ROI 裁切成小圖塊（patch），輸出到 `out/patches/`
-- **模型判定**：將 patches 丟入 YOLO（或 SAHI + YOLO）做分類  
-  - **確認髒污**：Hair / Debris / Stain  
-  - **排除誤報**：Shadow / Light Flash / Background changes
+### Step 3: YOLO 分類器判定 (AI Classification)
+本次已完成「ROI patches → YOLO（COCO 預訓練）粗辨識」整合，用來示範：
+- **常見物件**（例如 bottle / cup / cell phone / book / keyboard）可被 YOLO 正確分類
+- **髒污類**（頭髮、灰塵、污漬）通常不在 COCO 類別中，會顯示 `unknown`，但仍可透過 diff/ROI 被穩定抓出（後續可再自建髒污資料訓練）
 
-> 本次進度先完成「定位 → 對齊 → diff → ROI/patches」；YOLO 分類整合會接續加入。
+輸出：
+- `out/patches/roi_XXX.png`：每個 ROI 的裁切 patch
+- `out/roi_predictions_yolo.json`：每個 patch 的 top-1 label/conf
+- `out/yolo_test/*.png`：patch 視覺化（含 top-1 框與 label）
 
 ---
 
 ### Step 4: 結果輸出與定位 (Output & Localization)
-- **結果框選**：在 `warped_current` 上畫出 ROI 框並標註資訊
+- **結果框選**：在 `warped_current` 上畫出 ROI 框並標註資訊（含 mm 座標）
 - **mask 疊圖**：將 `diff_mask` 以半透明方式疊在 current，快速肉眼驗證抓取區域
 - **相對座標（mm）**：把 ROI 中心點從 warp 像素座標換算回 A4 的 mm 座標（可延伸到 cm、或對應房間平面）
+- **YOLO 標籤回寫**：將 YOLO 預測結果 attach 回 ROI，輸出「含 YOLO label」的最終框選圖
 
 輸出檔：
 - `result_rois_on_current.png`：ROI 框選結果圖（含中心點 mm）
 - `result_mask_overlay.png`：diff_mask 疊圖（最直覺看抓到哪）
+- `result_rois_with_yolo.png`：ROI 框選結果圖（含 YOLO label/conf）
 - `patches/roi_XXX.png`：每個 ROI 的裁切 patch
-- `rois.txt`：每個 ROI 的座標、面積、中心點 mm（後續可餵給 YOLO 或做統計）
+- `roi_predictions_yolo.json`：每個 ROI patch 的 YOLO top-1 預測
+- `rois.txt`：每個 ROI 的座標、面積、中心點 mm（後續可做統計或餵下一階段模型）
+
+---
 
 ## 4. 檔案結構與描述 (Files)
 
@@ -100,12 +107,21 @@ RoomSpotter/
 │     ├─ diff_mask.png
 │     ├─ result_rois_on_current.png
 │     ├─ result_mask_overlay.png
+│     ├─ result_rois_with_yolo.png
 │     ├─ rois.txt
+│     ├─ roi_predictions_yolo.json
+│     ├─ yolo_test/
+│     │  ├─ roi_001.png
+│     │  └─ ...
 │     └─ patches/
 │        ├─ roi_001.png
 │        └─ ...
 ├─ generate_locator_sheet.py      # 產生 A4 定位底紙（四角 ArUco）
-└─ compare_diff_final.py          # baseline/current 對齊 + diff + ROI + 輸出結果
+├─ compare_diff.py                # baseline/current 對齊 + diff + ROI + patches +（可選）YOLO 整合
+├─ recognition.py                        # YOLO patch 辨識模組（可被 compare_diff import）
+└─ yolov8n.pt                     # COCO 預訓練權重（Ultralytics）
+
+
 
 ```
 
@@ -116,9 +132,38 @@ RoomSpotter/
 | 類別 | 使用技術 |
 | :--- | :--- |
 | 程式語言 | Python 3.10+ |
-| 影像處理 | OpenCV (ArUco, warpPerspective, absdiff, Sobel, Canny) |
-| 深度學習 | YOLOv8 / YOLOv10（下一步整合） |
+| 影像處理 | OpenCV（ArUco、warpPerspective、absdiff、Sobel、Canny） |
+| 深度學習 | YOLOv8 / YOLOv10（本 PoC 先用 COCO 預訓練做粗分類；後續可再訓練髒污專用模型） |
 | 輔助工具 | NumPy、（可選）SAHI（切片推論） |
 
 ---
 
+## 6. 快速啟動 (Quick Start)
+
+### 6.1 安裝環境
+
+### 6.1 安裝環境
+
+> 建議用 requirements.txt（版本一致、最穩）
+
+```bash
+pip install -r requirements.txt
+```
+
+### 6.2 生成 A4 定位底紙
+
+```bash
+python generate_locator.py
+```
+
+### 6.3 準備 baseline / current
+把你拍的兩張照片放進：
+- `locator/baseline.png`
+- `locator/current.png`
+
+> 建議：拍攝時四角 ArUco 都要入鏡且清晰，current 可以歪、遠近不同、解析度不同都沒關係，因為會先做透視校正。
+
+### 6.4 執行比對 + ROI + patches + YOLO
+```bash
+python compare_diff.py
+```
