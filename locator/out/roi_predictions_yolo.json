@@ -2,85 +2,41 @@
   {
     "patch": "roi_001.png",
     "label": "cup",
-    "conf": 0.382197767496109,
+    "conf": 0.9461145997047424,
     "has_box": true,
     "box_xyxy": [
-      397,
-      484,
-      501,
-      629
+      1,
+      2,
+      146,
+      108
     ]
   },
   {
     "patch": "roi_002.png",
-    "label": "tv",
-    "conf": 0.31766456365585327,
+    "label": "banana",
+    "conf": 0.6276004314422607,
     "has_box": true,
     "box_xyxy": [
-      2,
-      4,
-      133,
-      172
+      1,
+      3,
+      150,
+      93
     ]
   },
   {
     "patch": "roi_003.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
+    "label": "bottle",
+    "conf": 0.860230565071106,
+    "has_box": true,
+    "box_xyxy": [
+      1,
+      2,
+      57,
+      170
+    ]
   },
   {
     "patch": "roi_004.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
-  },
-  {
-    "patch": "roi_005.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
-  },
-  {
-    "patch": "roi_006.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
-  },
-  {
-    "patch": "roi_007.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
-  },
-  {
-    "patch": "roi_008.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
-  },
-  {
-    "patch": "roi_009.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
-  },
-  {
-    "patch": "roi_010.png",
-    "label": "unknown",
-    "conf": 0.0,
-    "has_box": false,
-    "box_xyxy": null
-  },
-  {
-    "patch": "roi_011.png",
     "label": "unknown",
     "conf": 0.0,
     "has_box": false,
